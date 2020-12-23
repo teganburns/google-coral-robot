@@ -1,3 +1,134 @@
+
+
+#include <fcntl.h>    // For O_RDWR
+#include <unistd.h>   // For open(), creat() 
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <cstdio>
+#include <stdlib.h>
+#include <iostream>
+
+extern "C" {
+	#include <linux/i2c-dev.h>
+	#include <i2c/smbus.h>
+}
+
+#define SERVO_MIN 100
+#define SERVO_MAX 200
+#define SERVO_MID 150
+
+
+class Servos {
+
+	private:
+		void i2c_send_byte( char = 0x00 );
+		void i2c_print_byte();
+
+	public:
+		void set( int left, int right );
+		void set_print( int left, int right );
+
+};
+
+void Servos::i2c_send_byte( char byte_to_send ){
+
+	int file;
+	int adapter_nr = 1; // probably dynamically determined
+	char filename[20];
+	int addr = 0x8; // The I2C address
+
+	__u8 reg = 0x08;
+	__s32 res;
+
+	snprintf(filename, 19, "/dev/i2c-%d", adapter_nr);
+	file = open(filename, O_RDWR);
+	if (file < 0) {
+		/* ERROR HANDLING; you can check errno to see what went wrong */
+		//error();
+		exit(1);
+	}
+
+
+	if (ioctl(file, I2C_SLAVE, addr) < 0) {
+		/* ERROR HANDLING; you can check errno to see what went wrong */
+		//error();
+		exit(1);
+	}
+
+
+	res = i2c_smbus_write_byte(file, byte_to_send);
+	if (res < 0) {
+		/* ERROR HANDLING: i2c transaction failed */
+		//error();
+		exit(1);
+	}
+
+
+}
+
+void Servos::i2c_print_byte(){
+
+	int file;
+	int adapter_nr = 1; // probably dynamically determined
+	char filename[20];
+	int addr = 0x8; // The I2C address
+
+	__u8 reg = 0x08;
+	__s32 res;
+
+	snprintf(filename, 19, "/dev/i2c-%d", adapter_nr);
+	file = open(filename, O_RDWR);
+	if (file < 0) {
+		/* ERROR HANDLING; you can check errno to see what went wrong */
+		//error();
+		exit(1);
+	}
+
+
+	if (ioctl(file, I2C_SLAVE, addr) < 0) {
+		/* ERROR HANDLING; you can check errno to see what went wrong */
+		//error();
+		exit(1);
+	}
+
+	/* Using SMBus commands */
+	res = i2c_smbus_read_byte(file);
+	if (res < 0) {
+		/* ERROR HANDLING: i2c transaction failed */
+		//error();
+		exit(1);
+	} else {
+		/* res contains the read word */
+		std::cout << "res(HEX): " << std::hex << res << "  res(DEC): " << std::dec << res << std::endl;
+	}
+
+}
+
+void Servos::set( int left, int right ) {
+
+	i2c_send_byte( 0x00  );
+	i2c_send_byte( 0xFF  );
+	i2c_send_byte( left );
+	i2c_send_byte( ( SERVO_MAX + SERVO_MIN ) - right );
+
+}
+
+void Servos::set_print( int left, int right ) {
+
+	i2c_send_byte( 0x00  );
+	i2c_print_byte();
+	i2c_send_byte( 0xFF  );
+	i2c_print_byte();
+	i2c_send_byte( left );
+	i2c_print_byte();
+	i2c_send_byte( ( SERVO_MAX + SERVO_MIN ) - right );
+	i2c_print_byte();
+
+}
+
+// main.cpp
+
+
 #include <SFML/Graphics.hpp>
 #include <math.h>
 #include <iostream>
@@ -6,6 +137,11 @@
 
 #include <rplidar.h>
 #include <signal.h>
+
+extern "C" {
+	#include <linux/i2c-dev.h>
+	#include <i2c/smbus.h>
+}
 
 #ifndef _countof
 #define _countof(_Array) (int)(sizeof(_Array) / sizeof(_Array[0]))
@@ -30,7 +166,6 @@
 // Name space
 using namespace rp::standalone::rplidar;
 
-
 //Screen Size
 int window_height = 1080; 
 int window_width = 1920;
@@ -38,7 +173,6 @@ int window_width = 1920;
 bool checkRPLIDARHealth(RPlidarDriver * drv) {
     u_result     op_result;
     rplidar_response_device_health_t healthinfo;
-
 
     op_result = drv->getHealth(healthinfo);
     if (IS_OK(op_result)) { // the macro IS_OK is the preperred way to judge whether the operation is succeed.
@@ -85,8 +219,8 @@ std::vector<sf::CircleShape> get_poly_shape( int count, int window_x, int window
                theta[pos] = round(theta[pos]);
                */
 
-            x = ( ( window_width / 2 ) + ( base_radius + distance[pos] ) * cos( theta[pos] * M_PI / 180 ) * scale_factor);
-            y = ( ( window_height / 2 ) - ( base_radius + distance[pos] ) * sin( theta[pos] * M_PI / 180 ) * scale_factor);
+            x = ( ( window_width / 2 ) + ( base_radius + distance[pos] ) * sin( theta[pos] * M_PI / 180 ) * scale_factor);
+            y = ( ( window_height / 2 ) - ( base_radius + distance[pos] ) * cos( theta[pos] * M_PI / 180 ) * scale_factor);
 
         } else {
             x = ( window_width / count ) * pos;
@@ -108,6 +242,9 @@ int main(int argc, const char * argv[]) {
     sf::RenderWindow window(sf::VideoMode(window_width, window_height), "LIDAR Visualizer");
     //window.setFramerateLimit(9);
 
+	Servos servos;
+	servos.set(SERVO_MID, SERVO_MID ); // TODO: This fails without warning!!
+
 
     const char * opt_com_path = NULL;
     _u32         baudrateArray[2] = {115200, 256000};
@@ -116,15 +253,14 @@ int main(int argc, const char * argv[]) {
 
     bool useArgcBaudrate = false;
 
-    printf("Ultra simple LIDAR data grabber for RPLIDAR.\n"
-            "Version: " RPLIDAR_SDK_VERSION "\n");
+	// Print RPLIDAR Version
+	std::cout << "RPLIDAR Version: " << RPLIDAR_SDK_VERSION << std::endl;
 
     // read serial port from the command line...
     if (argc>1) opt_com_path = argv[1]; // or set to a fixed value: e.g. "com3" 
 
     // read baud rate from the command line if specified...
-    if (argc>2)
-    {
+    if (argc>2) {
         opt_com_baudrate = strtoul(argv[2], NULL, 10);
         useArgcBaudrate = true;
     }
@@ -150,43 +286,28 @@ int main(int argc, const char * argv[]) {
     rplidar_response_device_info_t devinfo;
     bool connectSuccess = false;
     // make connection...
-    if(useArgcBaudrate)
-    {
+    if(useArgcBaudrate) {
         if(!drv)
             drv = RPlidarDriver::CreateDriver(DRIVER_TYPE_SERIALPORT);
-        if (IS_OK(drv->connect(opt_com_path, opt_com_baudrate)))
-        {
+        if (IS_OK(drv->connect(opt_com_path, opt_com_baudrate))) {
             op_result = drv->getDeviceInfo(devinfo);
-
-            if (IS_OK(op_result)) 
-            {
+            if (IS_OK(op_result)) {
                 connectSuccess = true;
-            }
-            else
-            {
+			} else {
                 delete drv;
                 drv = NULL;
             }
         }
-    }
-    else
-    {
+    } else {
         size_t baudRateArraySize = (sizeof(baudrateArray))/ (sizeof(baudrateArray[0]));
-        for(size_t i = 0; i < baudRateArraySize; ++i)
-        {
-            if(!drv)
-                drv = RPlidarDriver::CreateDriver(DRIVER_TYPE_SERIALPORT);
-            if(IS_OK(drv->connect(opt_com_path, baudrateArray[i])))
-            {
+        for(size_t i = 0; i < baudRateArraySize; ++i) {
+            if(!drv) { drv = RPlidarDriver::CreateDriver(DRIVER_TYPE_SERIALPORT); }
+            if(IS_OK(drv->connect(opt_com_path, baudrateArray[i]))) {
                 op_result = drv->getDeviceInfo(devinfo);
-
-                if (IS_OK(op_result)) 
-                {
+                if (IS_OK(op_result)) {
                     connectSuccess = true;
                     break;
-                }
-                else
-                {
+                } else {
                     delete drv;
                     drv = NULL;
                 }
@@ -242,6 +363,21 @@ int main(int argc, const char * argv[]) {
                     case sf::Event::KeyPressed:
                         std::cout << "Key Pressed" << std::endl;
                         switch ( event.key.code ) {
+							case sf::Keyboard::W:
+								servos.set( SERVO_MAX, SERVO_MAX );
+								break;
+							case sf::Keyboard::A:
+								servos.set( SERVO_MIN, SERVO_MAX );
+								break;
+							case sf::Keyboard::S:
+								servos.set( SERVO_MIN, SERVO_MIN );
+								break;
+							case sf::Keyboard::D:
+								servos.set( SERVO_MAX, SERVO_MIN );
+								break;
+							case sf::Keyboard::Q:
+								servos.set( SERVO_MID, SERVO_MID );
+								break;
                             case sf::Keyboard::RBracket:
                                 scale_factor = scale_factor * 0.8;
                                 break;
@@ -257,6 +393,7 @@ int main(int argc, const char * argv[]) {
                         break;
                 }
 
+
             }
 
                 for ( int i = 0; i < poly_circle.size(); i ++ ) window.draw( poly_circle[i] );
@@ -265,10 +402,10 @@ int main(int argc, const char * argv[]) {
 
             //std::this_thread::sleep_for(std::chrono::milliseconds(600)); 
 
-    }
+	}
 
-        drv->stop();
-        drv->stopMotor();
+	drv->stop();
+	drv->stopMotor();
 
-        return 0;
+	return 0;
 }

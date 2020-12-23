@@ -35,7 +35,6 @@ $(APP_TARGET): $(OBJ) $(EXTRA_OBJ) $(SDK_TARGET)
 	$(CMD_HIDE)$(CC) $(ALL_CXXFLAGS) -o $@ $^ $(LDFLAGS)  
 
 
-#
 # Compile: create object files from C++ source files.
 $(TARGET_OBJ_ROOT)/%.o: %.cpp
 	@$(MKDIR) `dirname $@`
